@@ -1,6 +1,6 @@
 {
   "name": "abema-proxy",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,7 +9,8 @@
     "express": "^4.21.0",
     "http-proxy-middleware": "^3.0.2",
     "https-proxy-agent": "^7.0.5",
-    "socks-proxy-agent": "^8.0.4"
+    "socks-proxy-agent": "^8.0.4",
+    "node-fetch": "^2.7.0"
   },
   "engines": {
     "node": ">=18"
