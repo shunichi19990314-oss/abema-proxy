@@ -9,34 +9,33 @@ const PORT = process.env.PORT || 3000;
 const TARGET = process.env.TARGET || 'https://abema.tv';
 
 // ==============================
+// Header Spoofing Settings
+// ==============================
+// 日本の適当なIPをデフォルトで設定（効果は限定的です）
+const SPOOF_IP = process.env.SPOOF_IP || '126.0.0.1'; // 日本のIP帯の例
+const SPOOF_COUNTRY = process.env.SPOOF_COUNTRY || 'JP';
+const SPOOF_UA = process.env.SPOOF_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+
+// ==============================
 // Free Public Proxy Support
 // ==============================
 
-// Manual proxy list (優先度高)
-// 例: http://1.2.3.4:8080 または socks5://1.2.3.4:1080
 const MANUAL_PROXIES = (process.env.PROXY_LIST || '')
   .split(',')
   .map(p => p.trim())
   .filter(Boolean);
 
-// 自動取得する無料プロキシソース（日本優先）
 const PROXY_SOURCES = [
-  // ProxyScrape - Japan HTTP
   'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=JP&ssl=all&anonymity=all',
-  // ProxyScrape - Japan SOCKS5
   'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=5000&country=JP&ssl=all&anonymity=all',
-  // GeoNode free (Japan)
   'https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&country=JP',
 ];
 
 let proxyList = [...MANUAL_PROXIES];
 let currentProxyIndex = 0;
 let lastFetchTime = 0;
-const FETCH_INTERVAL = 10 * 60 * 1000; // 10分ごとに再取得
+const FETCH_INTERVAL = 10 * 60 * 1000;
 
-/**
- * 無料プロキシを取得してリストを更新
- */
 async function fetchFreeProxies() {
   const now = Date.now();
   if (now - lastFetchTime < FETCH_INTERVAL && proxyList.length > 0) {
@@ -51,7 +50,6 @@ async function fetchFreeProxies() {
       const res = await fetch(url, { timeout: 8000 });
       const text = await res.text();
 
-      // JSON形式（GeoNodeなど）
       if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
         try {
           const data = JSON.parse(text);
@@ -66,15 +64,12 @@ async function fetchFreeProxies() {
           }
         } catch (e) {}
       } else {
-        // テキスト形式（1行1プロキシ）
         text.split('\n').forEach(line => {
           line = line.trim();
           if (line && line.includes(':')) {
-            // すでに protocol:// が付いている場合とそのままの場合を処理
             if (line.startsWith('http') || line.startsWith('socks')) {
               newProxies.push(line);
             } else {
-              // デフォルトで http として扱う
               newProxies.push(`http://${line}`);
             }
           }
@@ -85,17 +80,12 @@ async function fetchFreeProxies() {
     }
   }
 
-  // 重複除去
   proxyList = [...new Set(newProxies)];
   lastFetchTime = now;
   currentProxyIndex = 0;
-
   console.log(`Loaded ${proxyList.length} proxies`);
 }
 
-/**
- * 次のプロキシを取得（ラウンドロビン）
- */
 function getNextProxy() {
   if (proxyList.length === 0) return null;
   const proxy = proxyList[currentProxyIndex % proxyList.length];
@@ -103,9 +93,6 @@ function getNextProxy() {
   return proxy;
 }
 
-/**
- * プロキシURLからAgentを作成
- */
 function createAgent(proxyUrl) {
   if (!proxyUrl) return undefined;
   try {
@@ -119,20 +106,16 @@ function createAgent(proxyUrl) {
   }
 }
 
-// 起動時にプロキシを取得
 fetchFreeProxies().catch(console.error);
-
-// 定期的に更新
 setInterval(() => {
   fetchFreeProxies().catch(console.error);
 }, FETCH_INTERVAL);
 
 // ==============================
-// Proxy Middleware
+// Proxy Middleware with Header Spoofing
 // ==============================
 
 app.use('/', (req, res, next) => {
-  // リクエストごとにプロキシを切り替える（失敗時の耐性を上げる）
   const proxyUrl = getNextProxy();
   const agent = createAgent(proxyUrl);
 
@@ -149,15 +132,38 @@ app.use('/', (req, res, next) => {
     followRedirects: true,
     ws: true,
     agent: agent,
-    headers: {
-      host: 'abema.tv'
-    },
-    onProxyReq: (proxyReq) => {
+    onProxyReq: (proxyReq, req, res) => {
+      // ===== Header Spoofing =====
       proxyReq.setHeader('Host', 'abema.tv');
+
+      // IP関連ヘッダーを日本IPで上書き
+      proxyReq.setHeader('X-Forwarded-For', SPOOF_IP);
+      proxyReq.setHeader('X-Real-IP', SPOOF_IP);
+      proxyReq.setHeader('X-Client-IP', SPOOF_IP);
+      proxyReq.setHeader('CF-Connecting-IP', SPOOF_IP);
+      proxyReq.setHeader('True-Client-IP', SPOOF_IP);
+      proxyReq.setHeader('X-Originating-IP', SPOOF_IP);
+      proxyReq.setHeader('X-Remote-IP', SPOOF_IP);
+      proxyReq.setHeader('X-Remote-Addr', SPOOF_IP);
+
+      // その他のよく使われるヘッダー
+      proxyReq.setHeader('X-Forwarded-Proto', 'https');
+      proxyReq.setHeader('X-Forwarded-Host', 'abema.tv');
+      proxyReq.setHeader('X-Forwarded-Port', '443');
+
+      // User-Agent
+      proxyReq.setHeader('User-Agent', SPOOF_UA);
+
+      // Accept-Language を日本語優先に
+      proxyReq.setHeader('Accept-Language', 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7');
+
+      // 国コード系（一部のサービスで使われる）
+      proxyReq.setHeader('CF-IPCountry', SPOOF_COUNTRY);
+      proxyReq.setHeader('X-Country-Code', SPOOF_COUNTRY);
+      proxyReq.setHeader('CloudFront-Viewer-Country', SPOOF_COUNTRY);
     },
     onError: (err, req, res) => {
       console.error('Proxy error:', err.message);
-      // エラー時は次のプロキシを試すためにリストから除外するなど、拡張可能
       if (!res.headersSent) {
         res.status(502).send('Bad Gateway: ' + err.message);
       }
@@ -173,13 +179,15 @@ app.get('/health', (req, res) => {
     status: 'ok',
     proxyCount: proxyList.length,
     currentProxyIndex,
+    spoofIp: SPOOF_IP,
+    spoofCountry: SPOOF_COUNTRY,
     target: TARGET,
     lastFetch: lastFetchTime ? new Date(lastFetchTime).toISOString() : null,
     timestamp: new Date().toISOString()
   });
 });
 
-// プロキシ一覧確認用（デバッグ）
+// プロキシ一覧
 app.get('/proxies', (req, res) => {
   res.json({
     count: proxyList.length,
@@ -188,6 +196,7 @@ app.get('/proxies', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`ABEMA reverse proxy (free public proxy mode) running on port ${PORT}`);
+  console.log(`ABEMA reverse proxy running on port ${PORT}`);
   console.log(`Target: ${TARGET}`);
+  console.log(`Spoof IP: ${SPOOF_IP} (${SPOOF_COUNTRY})`);
 });
